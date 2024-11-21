@@ -1,8 +1,149 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';  // Firebase Auth 추가
 import '../models/profile.dart';
+import '../models/post.dart';  // Post 클래스 import 추가
+import 'login_screen.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'edit_profile_screen.dart';
+import 'create_post_screen.dart';
+import 'post_detail_screen.dart';
 
-class ProfileScreen extends StatelessWidget {
-  const ProfileScreen({super.key});
+class ProfileScreen extends StatefulWidget {
+  @override
+  _ProfileScreenState createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  String userEmail = 'Loading...';  // 초기값 설정
+  File? _imageFile;
+  final ImagePicker _picker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserEmail();  // 사용자 이메일 로드
+  }
+
+  // 사용자 이메일을 가져오는 함수
+  Future<void> _loadUserEmail() async {
+    try {
+      User? user = FirebaseAuth.instance.currentUser;
+      if (user != null && mounted) {
+        setState(() {
+          userEmail = user.email ?? 'No email';  // 이메일이 없는 경우 기본값 설정
+        });
+      }
+    } catch (e) {
+      print('사용자 정보 로드 오류: $e');
+      if (mounted) {
+        setState(() {
+          userEmail = 'Error loading email';
+        });
+      }
+    }
+  }
+
+  // 로그아웃 처리
+  Future<void> _handleLogout() async {
+    try {
+      // Google 로그아웃
+      final GoogleSignIn googleSignIn = GoogleSignIn();
+      await googleSignIn.signOut();
+      
+      // Firebase 로그아웃
+      await FirebaseAuth.instance.signOut();
+      
+      if (mounted) {
+        // 로그아웃 성공 메시지
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('로그아웃되었습니다')),
+        );
+        
+        // 로그인 화면으로 이동
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+          (route) => false,
+        );
+      }
+    } catch (e) {
+      print('로그아웃 오류: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('로그아웃 실패: $e')),
+        );
+      }
+    }
+  }
+
+  // 프로필 이미지 선택
+  Future<void> _pickImage() async {
+    try {
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 75,
+      );
+      
+      if (image != null) {
+        setState(() {
+          _imageFile = File(image.path);
+        });
+        await _uploadProfileImage();
+      }
+    } catch (e) {
+      print('이미지 선택 오류: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('이미지 선택 실패: $e')),
+      );
+    }
+  }
+  
+  // 프로필 이미지 업로드
+  Future<void> _uploadProfileImage() async {
+    if (_imageFile == null) return;
+    
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+      
+      // Storage에 이미지 업로드
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('profiles/${user.uid}/profile.jpg');
+          
+      await storageRef.putFile(_imageFile!);
+      
+      // 업로드된 이미지의 URL 가져오기
+      final imageUrl = await storageRef.getDownloadURL();
+      
+      // Firestore에 URL 업데이트
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .update({
+            'photoURL': imageUrl,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('프로필 이미지가 업데이트되었습니다')),
+        );
+      }
+    } catch (e) {
+      print('이미지 업로드 오류: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('이미지 업로드 실패: $e')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,11 +163,11 @@ class ProfileScreen extends StatelessWidget {
       ...baseImages,  // 11-15
     ];
     
-    // 프로필 데이터 업데이트
+    // 프로필 데이터 업데이트 - 이메일 사용
     final profile = Profile(
-      username: 'flutter_developer',
+      username: userEmail,  // 하드코딩된 값 대신 실제 이메일 사용
       profileImageUrl: 'assets/images/profile.png',
-      posts: feedImages.length,  // 15개로 업데이트됨
+      posts: feedImages.length,
       followers: 1234,
       following: 321,
       fullName: 'Flutter Developer',
@@ -36,15 +177,29 @@ class ProfileScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(profile.username),
+        title: Text(profile.username),  // 이메일이 표시됨
         actions: [
           IconButton(
             icon: const Icon(Icons.add_box_outlined),
-            onPressed: () {},
+            onPressed: () {
+              // CreatePostScreen으로 이동
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const CreatePostScreen(),
+                ),
+              );
+            },
+            tooltip: '게시글 작성',
           ),
           IconButton(
             icon: const Icon(Icons.menu),
             onPressed: () {},
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _handleLogout,  // 로그아웃 함수 연결
+            tooltip: '로그아웃',
           ),
         ],
       ),
@@ -72,9 +227,36 @@ class ProfileScreen extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 40,
-            backgroundImage: AssetImage(profile.profileImageUrl), // NetworkImage에서 AssetImage로 변경
+          Stack(
+            children: [
+              GestureDetector(
+                onTap: _pickImage,
+                child: CircleAvatar(
+                  radius: 40,
+                  backgroundImage: _imageFile != null
+                      ? FileImage(_imageFile!)
+                      : (profile.photoURL != null
+                          ? NetworkImage(profile.photoURL!) as ImageProvider
+                          : const AssetImage('assets/images/profile.png')),
+                ),
+              ),
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.blue,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.camera_alt,
+                    size: 16,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
           ),
           Expanded(
             child: Row(
@@ -140,7 +322,15 @@ class ProfileScreen extends StatelessWidget {
             children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () {},
+                  onPressed: () {
+                    // EditProfileScreen으로 이동
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const EditProfileScreen(),
+                      ),
+                    );
+                  },
                   child: const Text('프로필 편집'),
                 ),
               ),
@@ -178,21 +368,73 @@ class ProfileScreen extends StatelessWidget {
   }
 
   Widget _buildPostGrid(Profile profile) {
-    return SliverGrid(
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        mainAxisSpacing: 2,
-        crossAxisSpacing: 2,
-      ),
-      delegate: SliverChildBuilderDelegate(
-        (context, index) {
-          return Image.asset(
-            profile.postImages[index],
-            fit: BoxFit.cover,
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('posts')
+          .where('authorId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+          .orderBy('createdAt', descending: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return SliverToBoxAdapter(
+            child: Center(child: Text('에러가 발생했습니다: ${snapshot.error}')),
           );
-        },
-        childCount: profile.postImages.length,
-      ),
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SliverToBoxAdapter(
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final posts = snapshot.data?.docs ?? [];
+        
+        if (posts.isEmpty) {
+          return const SliverToBoxAdapter(
+            child: Center(child: Text('게시글이 없습니다')),
+          );
+        }
+
+        return SliverGrid(
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            mainAxisSpacing: 2,
+            crossAxisSpacing: 2,
+          ),
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              final post = Post.fromFirestore(
+                posts[index].data() as Map<String, dynamic>,
+                posts[index].id,
+              );
+              
+              // 첫 번째 미디어 파일만 표시
+              return GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => PostDetailScreen(post: post),
+                    ),
+                  );
+                },
+                child: Image.network(
+                  post.mediaUrls.first,
+                  fit: BoxFit.cover,
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) return child;
+                    return const Center(child: CircularProgressIndicator());
+                  },
+                  errorBuilder: (context, error, stackTrace) {
+                    return const Center(child: Icon(Icons.error));
+                  },
+                ),
+              );
+            },
+            childCount: posts.length,
+          ),
+        );
+      },
     );
   }
 } 

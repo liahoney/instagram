@@ -1,0 +1,45 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 인증된 사용자 확인
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // 문서 소유자 확인
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    // 유효한 게시글 데이터 확인
+    function isValidPost() {
+      let post = request.resource.data;
+      return post.size() <= 10 && // 최대 10개 미디어
+             post.caption.size() <= 2000 && // 최대 2000자
+             post.mediaTypes.hasAll(['image', 'video']); // 허용된 미디어 타입
+    }
+
+    // Users 컬렉션
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isOwner(userId);
+    }
+    
+    // Posts 컬렉션
+    match /posts/{postId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidPost();
+      allow update, delete: if isAuthenticated() && 
+                            resource.data.authorId == request.auth.uid;
+      
+      // Comments 서브컬렉션
+      match /comments/{commentId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated();
+        allow delete: if isAuthenticated() && 
+                      (resource.data.authorId == request.auth.uid ||
+                       get(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid);
+      }
+    }
+  }
+} 

@@ -1,5 +1,6 @@
 class Profile {
   final String username;
+  final String? photoURL;
   final String profileImageUrl;
   final int posts;
   final int followers;
@@ -10,6 +11,7 @@ class Profile {
 
   Profile({
     required this.username,
+    this.photoURL,
     required this.profileImageUrl,
     required this.posts,
     required this.followers,
